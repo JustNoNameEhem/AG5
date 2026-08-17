@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mlbb.io /api/matchup/predict — API Tester</title>
+<style>
+  :root{
+    --bg:#0A0A0B;
+    --card:#151517;
+    --card2:#1c1c1f;
+    --border:rgba(255,255,255,0.08);
+    --red:#ef4444;
+    --red-dark:#7f1d1d;
+    --blue:#3b82f6;
+    --white:#FAFAFA;
+    --grey:#9CA3AF;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px; font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg); color:var(--white);
+  }
+  h1{font-size:20px; margin:0 0 4px;}
+  h1 span{color:var(--red);}
+  p.sub{color:var(--grey); font-size:13px; margin:0 0 20px;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;}
+  @media (max-width:720px){ .grid{grid-template-columns:1fr;} }
+  .panel{
+    background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px;
+  }
+  .panel.teamA{border-color:rgba(59,130,246,.35);}
+  .panel.teamB{border-color:rgba(239,68,68,.35);}
+  .panel h3{margin:0 0 10px; font-size:13px; letter-spacing:.05em; text-transform:uppercase;}
+  .teamA h3{color:var(--blue);}
+  .teamB h3{color:var(--red);}
+  select{
+    width:100%; padding:8px; margin-bottom:8px; background:var(--card2); color:var(--white);
+    border:1px solid var(--border); border-radius:8px; font-size:13px;
+  }
+  .picked{display:flex; flex-wrap:wrap; gap:6px; min-height:28px;}
+  .chip{
+    display:flex; align-items:center; gap:6px; background:var(--card2);
+    border:1px solid var(--border); border-radius:16px; padding:3px 8px 3px 3px; font-size:12px;
+  }
+  .chip img{width:20px; height:20px; border-radius:50%; object-fit:cover;}
+  .chip button{
+    background:none; border:none; color:var(--grey); cursor:pointer; font-size:13px; padding:0 2px;
+  }
+  button.main{
+    background:linear-gradient(90deg,#ef4444,#dc2626); color:#fff; border:none;
+    padding:12px 18px; border-radius:10px; font-weight:600; font-size:14px; cursor:pointer; width:100%;
+  }
+  button.main:disabled{opacity:.5; cursor:not-allowed;}
+  .status{
+    margin-top:14px; padding:10px 12px; border-radius:8px; font-size:12px; font-family:monospace;
+    white-space:pre-wrap; word-break:break-all;
+  }
+  .status.ok{background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.35); color:#86efac;}
+  .status.err{background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.35); color:#fca5a5;}
+  .status.info{background:rgba(255,255,255,.05); border:1px solid var(--border); color:var(--grey);}
+  pre{
+    background:#000; border:1px solid var(--border); border-radius:8px; padding:12px;
+    font-size:11px; overflow:auto; max-height:340px; margin-top:8px;
+  }
+  .note{
+    background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px;
+    font-size:12.5px; color:var(--grey); line-height:1.6; margin-top:20px;
+  }
+  .note b{color:var(--white);}
+  code{background:var(--card2); padding:1px 5px; border-radius:4px; font-size:11.5px;}
+</style>
+</head>
+<body>
+
+<h1>mlbb.io <span>/api/matchup/predict</span> — Tester</h1>
+<p class="sub">Pick up to 5 heroes per team, hit "Test API", and read the raw result below. This is a diagnostic page — it is not the final app UI.</p>
+
+<div class="grid">
+  <div class="panel teamA">
+    <h3>Team A</h3>
+    <select id="selA"><option>Loading heroes…</option></select>
+    <div class="picked" id="pickedA"></div>
+  </div>
+  <div class="panel teamB">
+    <h3>Team B</h3>
+    <select id="selB"><option>Loading heroes…</option></select>
+    <div class="picked" id="pickedB"></div>
+  </div>
+</div>
+
+<button class="main" id="btnTest" disabled>Loading hero list…</button>
+
+<div id="statusBox"></div>
+<pre id="respBox" style="display:none"></pre>
+
+<div class="note">
+  <b>How this test works</b><br>
+  1. Hero list is pulled live from <code>GET /api/hero/filtered-statistics?rankId=1&amp;timeframeId=1</code> (confirmed working).<br>
+  2. On "Test API" this page tries <code>POST /api/matchup/predict</code> with a best-guess body:
+  <code>{ "teamA": [heroId,...], "teamB": [heroId,...] }</code>.<br><br>
+  <b>If you see a CORS / network error</b> instead of JSON: that means mlbb.io's API doesn't allow browser requests
+  from outside their own site — normal for an internal Next.js route. In that case, do this instead:<br>
+  1. Open <code>https://mlbb.io/en/matchup</code> in Chrome.<br>
+  2. Open DevTools → Network tab, filter by "predict".<br>
+  3. Pick 5 heroes per side and click "Analyze Matchup".<br>
+  4. Click the <code>predict</code> request → right-click → "Copy → Copy as fetch".<br>
+  5. Paste that here (in chat) — I'll match the Java fragment's payload/response parsing to the real shape instead of guessing.
+</div>
+
+<script>
+const API_HEROES = "https://mlbb.io/api/hero/filtered-statistics?rankId=1&timeframeId=1";
+const API_PREDICT = "https://mlbb.io/api/matchup/predict";
+
+let heroes = [];
+let teamA = [];
+let teamB = [];
+
+function renderPicked(list, containerId, teamKey){
+  const el = document.getElementById(containerId);
+  el.innerHTML = "";
+  list.forEach(h => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `<img src="${h.img_src}" onerror="this.style.display='none'"><span>${h.hero_name}</span>`;
+    const btn = document.createElement("button");
+    btn.textContent = "✕";
+    btn.onclick = () => {
+      if(teamKey === "A") teamA = teamA.filter(x => x.hero_id !== h.hero_id);
+      else teamB = teamB.filter(x => x.hero_id !== h.hero_id);
+      renderPicked(teamKey === "A" ? teamA : teamB, containerId, teamKey);
+      updateButton();
+    };
+    chip.appendChild(btn);
+    el.appendChild(chip);
+  });
+}
+
+function updateButton(){
+  const btn = document.getElementById("btnTest");
+  btn.disabled = !(teamA.length > 0 && teamB.length > 0);
+  btn.textContent = btn.disabled
+    ? "Pick at least 1 hero per team"
+    : `Test API (Team A: ${teamA.length} vs Team B: ${teamB.length})`;
+}
+
+function populateSelect(selectId, teamKey){
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">-- add a hero --</option>' +
+    heroes.map(h => `<option value="${h.hero_id}">${h.hero_name}</option>`).join("");
+  sel.onchange = () => {
+    const id = parseInt(sel.value, 10);
+    if(!id) return;
+    const hero = heroes.find(h => h.hero_id === id);
+    const list = teamKey === "A" ? teamA : teamB;
+    if(list.length >= 5 || list.find(h => h.hero_id === id)){ sel.value = ""; return; }
+    list.push(hero);
+    renderPicked(list, teamKey === "A" ? "pickedA" : "pickedB", teamKey);
+    updateButton();
+    sel.value = "";
+  };
+}
+
+async function loadHeroes(){
+  try{
+    const res = await fetch(API_HEROES);
+    const json = await res.json();
+    heroes = (json.data && json.data.heroes) ? json.data.heroes : [];
+    heroes.sort((a,b) => a.hero_name.localeCompare(b.hero_name));
+    populateSelect("selA", "A");
+    populateSelect("selB", "B");
+    updateButton();
+    setStatus("info", `Loaded ${heroes.length} heroes from /api/hero/filtered-statistics ✔`);
+  }catch(e){
+    setStatus("err", "Could not load hero list (this endpoint needs to be reachable from your browser).\n" + e);
+  }
+}
+
+function setStatus(kind, text){
+  const box = document.getElementById("statusBox");
+  box.className = "status " + kind;
+  box.textContent = text;
+}
+
+document.getElementById("btnTest").onclick = async () => {
+  const body = {
+    teamA: teamA.map(h => h.hero_id),
+    teamB: teamB.map(h => h.hero_id)
+  };
+  setStatus("info", "Sending POST " + API_PREDICT + "\nBody: " + JSON.stringify(body, null, 2));
+  document.getElementById("respBox").style.display = "none";
+
+  try{
+    const res = await fetch(API_PREDICT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    let pretty = text;
+    try{ pretty = JSON.stringify(JSON.parse(text), null, 2); }catch(_){}
+
+    if(res.ok){
+      setStatus("ok", `HTTP ${res.status} OK — response below:`);
+    }else{
+      setStatus("err", `HTTP ${res.status} — the guessed payload shape was probably wrong. Response below (still useful — check the error message for hints about the expected field names):`);
+    }
+    const pre = document.getElementById("respBox");
+    pre.style.display = "block";
+    pre.textContent = pretty;
+  }catch(e){
+    setStatus("err",
+      "Request failed before getting a response — most likely CORS (the API is blocking cross-origin browser requests).\n\n" +
+      "Error: " + e + "\n\n" +
+      "See the note below for how to capture the real request from mlbb.io's own Network tab instead."
+    );
+  }
+};
+
+loadHeroes();
+</script>
+
+</body>
+</html>
